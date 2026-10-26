@@ -39,7 +39,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-slate-900 tracking-tight text-lg">
-                  EduScan <span className="text-blue-600">2025</span>
+                  EduScan <span className="text-blue-600"></span>
                 </span>
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
                   Chuẩn BGD&ĐT

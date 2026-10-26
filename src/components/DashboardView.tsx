@@ -210,7 +210,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {currentExam.title}
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 max-w-2xl">
-              Cấu trúc đề chuẩn Bộ GD&ĐT 2025: Thời gian {currentExam.durationMinutes} phút • Thang điểm {currentExam.totalScore}đ • Gồm 3 phần (Trắc nghiệm đơn, Đúng/Sai, Trả lời ngắn).
+              Cấu trúc đề chuẩn Bộ GD&ĐT: Thời gian {currentExam.durationMinutes} phút • Thang điểm {currentExam.totalScore}đ • Gồm 3 phần (Trắc nghiệm đơn, Đúng/Sai, Trả lời ngắn).
             </p>
           </div>
 

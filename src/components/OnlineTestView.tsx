@@ -84,8 +84,9 @@ export const OnlineTestView: React.FC<OnlineTestViewProps> = ({
       examCode: selectedCode,
       studentName: studentName || 'Học sinh',
       className: students.find((s) => s.sbd === sbd)?.className || '12A1',
+      academicYear: students.find((s) => s.sbd === sbd)?.academicYear || currentExam.academicYear || '2024 - 2025',
       scannedAt: new Date().toLocaleString('vi-VN') + ' (Thi trực tuyến)',
-      imagePreviewUrl: '/assets/aistudio/Phi_u_TNTL_2025_TNMaker_f1ed3d93.pdf',
+      imagePreviewUrl: '/assets/aistudio/phieu_bgd_2025_preview.png',
       rawAnswers: {
         part1: part1Answers,
         part2: part2Answers,

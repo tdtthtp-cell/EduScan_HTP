@@ -1,6 +1,6 @@
 {
-  "name": "EduScan 2025 - Chấm Thi & Phân Tích Trắc Nghiệm Chuẩn BGD",
-  "description": "Ứng dụng chấm thi trắc nghiệm phiếu 2025 chuẩn Bộ GD&ĐT: quét ảnh chấm tự động, phân tích ma trận năng lực theo chủ đề, tự động nhập điểm vào danh sách học sinh và xuất báo cáo chi tiết.",
+  "name": "EduScan - Chấm Thi & Phân Tích Trắc Nghiệm Chuẩn BGD",
+  "description": "Ứng dụng chấm thi trắc nghiệm phiếu theo chuẩn Bộ GD&ĐT: quét ảnh chấm tự động, phân tích ma trận năng lực theo chủ đề, tự động nhập điểm vào danh sách học sinh và xuất báo cáo chi tiết.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

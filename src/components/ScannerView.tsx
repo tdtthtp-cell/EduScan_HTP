@@ -19,7 +19,15 @@ import {
   Smartphone,
   Zap,
   RotateCw,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Users,
+  Calendar,
+  GraduationCap,
+  ArrowRight,
+  UserPlus,
+  ListPlus,
+  CheckCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { Exam, Student, ExamSubmission } from '../types/exam';
 import { gradeExamSubmission, getGradeRank } from '../utils/scoring';
@@ -30,6 +38,9 @@ interface ScannerViewProps {
   students: Student[];
   onSaveSubmission: (submission: ExamSubmission) => void;
   onViewStudentReport: (submission: ExamSubmission) => void;
+  onNavigateToStudents?: () => void;
+  onAddStudent?: (student: Student) => void;
+  onBatchAddStudents?: (students: Student[]) => void;
 }
 
 export const ScannerView: React.FC<ScannerViewProps> = ({
@@ -37,18 +48,38 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   students,
   onSaveSubmission,
   onViewStudentReport,
+  onNavigateToStudents,
+  onAddStudent,
+  onBatchAddStudents,
 }) => {
   const [selectedExamCode, setSelectedExamCode] = useState<string>(currentExam.codes[0] || '101');
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [scanStep, setScanStep] = useState<string>('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [fileMimeType, setFileMimeType] = useState<string>('image/jpeg');
+
+  // Year & Class Context for matching SBD to correct student list
+  const [targetYear, setTargetYear] = useState<string>(currentExam.academicYear || '2024 - 2025');
+  const [targetClass, setTargetClass] = useState<string>(students[0]?.className || '12A1');
+  
+  // Quick Add Student Modal before / during grading
+  const [showQuickAddModal, setShowQuickAddModal] = useState<boolean>(false);
+  const [quickAddMode, setQuickAddMode] = useState<'single' | 'batch'>('single');
+  const [quickSbd, setQuickSbd] = useState<string>('');
+  const [quickName, setQuickName] = useState<string>('');
+  const [quickGender, setQuickGender] = useState<'Nam' | 'Nữ'>('Nam');
+  const [quickDob, setQuickDob] = useState<string>('15/05/2007');
+  const [quickBatchText, setQuickBatchText] = useState<string>(
+`010229	Trần Thị Thảo	12A1	2024 - 2025	Nữ	19/08/2007
+010230	Phạm Gia Huy	12A1	2024 - 2025	Nam	04/11/2007`
+  );
   
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
   const [hasTorchSupport, setHasTorchSupport] = useState<boolean>(false);
+  const [showSampleModal, setShowSampleModal] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
@@ -63,17 +94,54 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
   const [confidence, setConfidence] = useState<number>(98.5);
   const [activeReviewTab, setActiveReviewTab] = useState<'part1' | 'part2' | 'part3' | 'overview'>('overview');
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+  const [lastSavedSubmission, setLastSavedSubmission] = useState<ExamSubmission | null>(null);
+
+  // Available unique classes and years
+  const availableClasses = React.useMemo(() => {
+    const set = new Set(students.map((s) => s.className).filter(Boolean));
+    if (!set.has('12A1')) set.add('12A1');
+    if (!set.has('12A2')) set.add('12A2');
+    return Array.from(set);
+  }, [students]);
+
+  const availableYears = React.useMemo(() => {
+    const set = new Set(students.map((s) => s.academicYear).filter(Boolean));
+    if (currentExam.academicYear) set.add(currentExam.academicYear);
+    if (!set.has('2024 - 2025')) set.add('2024 - 2025');
+    if (!set.has('2025 - 2026')) set.add('2025 - 2026');
+    return Array.from(set);
+  }, [students, currentExam.academicYear]);
+
+  // Three-way matching of student: SBD + Class + Academic Year
+  const matchedStudent = React.useMemo(() => {
+    // 1. Strict match: SBD + targetClass + targetYear
+    const exact = students.find(
+      (s) =>
+        s.sbd === detectedSbd &&
+        (targetClass === 'all' || s.className === targetClass) &&
+        (targetYear === 'all' || s.academicYear === targetYear)
+    );
+    if (exact) return exact;
+
+    // 2. Fallback: match by SBD across any class in the same year
+    const inYear = students.find(
+      (s) => s.sbd === detectedSbd && (targetYear === 'all' || s.academicYear === targetYear)
+    );
+    if (inYear) return inYear;
+
+    // 3. Fallback: match by SBD in entire roster
+    return students.find((s) => s.sbd === detectedSbd);
+  }, [students, detectedSbd, targetClass, targetYear]);
 
   // Active question set for the selected exam code
   const currentQuestions = currentExam.questionsByCode[detectedCode] || currentExam.questionsByCode[selectedExamCode] || Object.values(currentExam.questionsByCode)[0] || [];
 
-  // Match student name whenever SBD changes
+  // Match student name whenever SBD or matchedStudent changes
   useEffect(() => {
-    const matched = students.find((s) => s.sbd === detectedSbd);
-    if (matched) {
-      setStudentName(matched.name);
+    if (matchedStudent) {
+      setStudentName(matchedStudent.name);
     }
-  }, [detectedSbd, students]);
+  }, [matchedStudent]);
 
   // Live calculation of scores based on current state & manual edits
   const currentGrading = React.useMemo(() => {
@@ -184,8 +252,8 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
     const sampleStudent = students[randomIndex] || students[0];
     const sampleCode = currentExam.codes[Math.floor(Math.random() * currentExam.codes.length)] || '101';
 
-    setPreviewImage('/assets/aistudio/Phi_u_TNTL_2025_TNMaker_f1ed3d93.pdf');
-    setFileMimeType('application/pdf');
+    setPreviewImage('/assets/aistudio/phieu_bgd_2025_preview.png');
+    setFileMimeType('image/png');
 
     setIsScanning(true);
     setSaveSuccess(false);
@@ -328,19 +396,109 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
     };
   }, []);
 
-  // Save to Student Gradebook
+  // Quick Add Single Student from Keyboard
+  const handleQuickAddSingleStudent = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickName.trim() || !quickSbd.trim()) {
+      alert('Vui lòng nhập đầy đủ Số báo danh và Họ tên!');
+      return;
+    }
+    const cleanSbd = quickSbd.padStart(6, '0').slice(-6);
+    const newStudent: Student = {
+      id: `hs-${cleanSbd}-${Date.now()}`,
+      sbd: cleanSbd,
+      name: quickName.trim(),
+      className: targetClass !== 'all' ? targetClass : '12A1',
+      academicYear: targetYear !== 'all' ? targetYear : (currentExam.academicYear || '2024 - 2025'),
+      gender: quickGender,
+      dob: quickDob,
+    };
+
+    if (onAddStudent) {
+      onAddStudent(newStudent);
+    }
+    setDetectedSbd(cleanSbd);
+    setStudentName(newStudent.name);
+    setQuickSbd('');
+    setQuickName('');
+    setShowQuickAddModal(false);
+  };
+
+  // Quick Add Batch from Excel / Keyboard
+  const handleQuickAddBatchStudents = () => {
+    const lines = quickBatchText.split('\n').map((l) => l.trim()).filter(Boolean);
+    const parsed: Student[] = [];
+
+    lines.forEach((line, idx) => {
+      const parts = line.includes('\t')
+        ? line.split('\t').map((p) => p.trim())
+        : line.split('|').map((p) => p.trim());
+
+      if (parts.length >= 2) {
+        const rawSbd = parts[0].replace(/\D/g, '') || String(idx + 1);
+        const sbd = rawSbd.padStart(6, '0').slice(-6);
+        const name = parts[1];
+        const className = parts[2] || (targetClass !== 'all' ? targetClass : '12A1');
+        const academicYear = parts[3] || (targetYear !== 'all' ? targetYear : (currentExam.academicYear || '2024 - 2025'));
+        const gender = parts[4] === 'Nữ' || parts[4] === 'Nu' || parts[4] === 'F' ? 'Nữ' : 'Nam';
+        const dob = parts[5] || '15/05/2007';
+
+        parsed.push({
+          id: `hs-${sbd}-${Date.now()}-${idx}`,
+          sbd,
+          name,
+          className,
+          academicYear,
+          gender,
+          dob,
+        });
+      }
+    });
+
+    if (parsed.length === 0) {
+      alert('Không phân tích được học sinh nào. Định dạng mỗi dòng: SBD [TAB] Họ Tên [TAB] Lớp [TAB] Năm học');
+      return;
+    }
+
+    if (onBatchAddStudents) {
+      onBatchAddStudents(parsed);
+    }
+    setShowQuickAddModal(false);
+  };
+
+  // Save to Student Gradebook (Linked by SBD + Class + Academic Year)
   const handleSaveToGradebook = () => {
-    const student = students.find((s) => s.sbd === detectedSbd);
+    const finalClass = matchedStudent?.className || (targetClass !== 'all' ? targetClass : '12A1');
+    const finalYear = matchedStudent?.academicYear || (targetYear !== 'all' ? targetYear : currentExam.academicYear || '2024 - 2025');
+    const finalName = studentName.trim() || matchedStudent?.name || `Thí sinh ${detectedSbd}`;
+
+    // Auto-register student into roster if not already present
+    const exists = students.some(
+      (s) => s.sbd === detectedSbd && s.className === finalClass && s.academicYear === finalYear
+    );
+    if (!exists && onAddStudent) {
+      onAddStudent({
+        id: `hs-${detectedSbd}-${Date.now()}`,
+        sbd: detectedSbd,
+        name: finalName,
+        className: finalClass,
+        academicYear: finalYear,
+        gender: 'Nam',
+        dob: '01/01/2007',
+      });
+    }
+
     const newSubmission: ExamSubmission = {
       id: `sub-${detectedSbd}-${Date.now()}`,
       examId: currentExam.id,
       examTitle: currentExam.title,
       sbd: detectedSbd,
       examCode: detectedCode,
-      studentName: studentName || student?.name || 'Thí sinh',
-      className: student?.className || '12A1',
+      studentName: finalName,
+      className: finalClass,
+      academicYear: finalYear,
       scannedAt: new Date().toLocaleString('vi-VN'),
-      imagePreviewUrl: previewImage || '/assets/aistudio/Phi_u_TNTL_2025_TNMaker_f1ed3d93.pdf',
+      imagePreviewUrl: previewImage || '/assets/aistudio/phieu_bgd_2025_preview.png',
       rawAnswers: {
         part1: detectedPart1,
         part2: detectedPart2,
@@ -350,10 +508,14 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
       questionResults: currentGrading.questionResults,
       topicCompetencies: currentGrading.topicCompetencies,
       levelCompetencies: currentGrading.levelCompetencies,
-      scanNotes,
+      scanNotes: [
+        ...scanNotes,
+        `✓ Đã nhập kết quả kiểm tra vào học sinh: ${finalName} | SBD: ${detectedSbd} | Lớp: ${finalClass} | Năm học: ${finalYear}.`,
+      ],
     };
 
     onSaveSubmission(newSubmission);
+    setLastSavedSubmission(newSubmission);
     setSaveSuccess(true);
 
     try {
@@ -464,6 +626,106 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
                 onChange={handleFileUpload}
               />
             </label>
+          </div>
+        </div>
+
+        {/* Academic Year, Class, and Student Roster Context Bar */}
+        <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/70 p-3.5 rounded-xl border">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {/* Academic Year Selector */}
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                  Năm học
+                </span>
+                <select
+                  value={targetYear}
+                  onChange={(e) => setTargetYear(e.target.value)}
+                  className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Tất cả các năm học</option>
+                  {availableYears.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+            {/* Class Selector */}
+            <div className="flex items-center gap-2">
+              <GraduationCap className="w-4 h-4 text-blue-600 shrink-0" />
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                  Lớp học
+                </span>
+                <select
+                  value={targetClass}
+                  onChange={(e) => setTargetClass(e.target.value)}
+                  className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Tất cả các lớp</option>
+                  {availableClasses.map((c) => (
+                    <option key={c} value={c}>
+                      Lớp {c} ({students.filter((s) => s.className === c && (targetYear === 'all' || s.academicYear === targetYear)).length} HS)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="h-6 w-px bg-slate-200 hidden sm:block"></div>
+
+            {/* Expected Exam Code */}
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                  Mã đề dự kiến
+                </span>
+                <select
+                  value={selectedExamCode}
+                  onChange={(e) => {
+                    setSelectedExamCode(e.target.value);
+                    setDetectedCode(e.target.value);
+                  }}
+                  className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-emerald-700 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                >
+                  {currentExam.codes.map((c) => (
+                    <option key={c} value={c}>
+                      Mã đề {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Roster Action */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowQuickAddModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-all cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Thêm học sinh từ bàn phím</span>
+            </button>
+
+            {onNavigateToStudents && (
+              <button
+                type="button"
+                onClick={onNavigateToStudents}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 shadow-2xs transition-colors cursor-pointer"
+              >
+                <Users className="w-3.5 h-3.5 text-slate-500" />
+                <span>Sổ điểm lớp ({students.filter((s) => targetClass === 'all' || s.className === targetClass).length})</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -584,15 +846,14 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
                 <span className="text-[11px] text-slate-500 font-medium">
                   Độ tin cậy: <span className="font-bold text-emerald-600">{confidence}%</span>
                 </span>
-                <a
-                  href="/assets/aistudio/Phi_u_TNTL_2025_TNMaker_f1ed3d93.pdf"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-blue-600 font-semibold hover:underline flex items-center gap-1"
+                <button
+                  type="button"
+                  onClick={() => setShowSampleModal(true)}
+                  className="text-[11px] text-blue-600 font-semibold hover:underline flex items-center gap-1 cursor-pointer"
                 >
-                  <FileDown className="w-3 h-3" />
-                  Xem file gốc PDF
-                </a>
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Xem phiếu mẫu BGD</span>
+                </button>
               </div>
             </div>
 
@@ -673,23 +934,87 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
               </div>
             </div>
 
-            {/* Student & Code match */}
-            <div className="mt-4 pt-3 border-t border-slate-800/60 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400 flex items-center gap-1">
-                  <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-                  Học sinh:
-                </span>
-                <span className="font-bold text-white">{studentName}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Số báo danh (Mục 7):</span>
-                <span className="font-mono font-bold text-blue-300">{detectedSbd}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">Mã đề thi (Mục 8):</span>
-                <span className="font-mono font-bold text-emerald-300">{detectedCode}</span>
-              </div>
+            {/* Student & Code Match Card (SBD + Lớp + Năm học) */}
+            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-2.5">
+              {matchedStudent ? (
+                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      Đã khớp trong danh sách học sinh:
+                    </span>
+                    <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      Lớp {matchedStudent.className}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Họ và tên:</span>
+                    <span className="font-bold text-white text-sm">{studentName}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Số báo danh (Mục 7):</span>
+                    <span className="font-mono font-bold text-amber-300 tracking-wider text-sm">{detectedSbd}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Năm học:</span>
+                    <span className="font-medium text-slate-200">{matchedStudent.academicYear}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Mã đề nhận diện (Mục 8):</span>
+                    <span className="font-mono font-bold text-blue-300">{detectedCode}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-xs space-y-2">
+                  <div className="flex items-start gap-1.5 text-[11px] font-bold text-amber-300">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
+                    <span>SBD {detectedSbd} chưa có trong Lớp {targetClass} ({targetYear})</span>
+                  </div>
+                  <p className="text-[10px] text-slate-300 leading-relaxed">
+                    Hệ thống sẽ tự động thêm học sinh này vào danh sách khi lưu điểm:
+                  </p>
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-0.5">Họ và tên học sinh:</label>
+                    <input
+                      type="text"
+                      value={studentName}
+                      onChange={(e) => setStudentName(e.target.value)}
+                      placeholder="Nhập tên học sinh..."
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs font-semibold focus:outline-hidden focus:border-amber-400"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Lớp:</span>
+                      <select
+                        value={targetClass}
+                        onChange={(e) => setTargetClass(e.target.value)}
+                        className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-700 text-slate-200 text-xs"
+                      >
+                        {availableClasses.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">Năm học:</span>
+                      <select
+                        value={targetYear}
+                        onChange={(e) => setTargetYear(e.target.value)}
+                        className="w-full px-2 py-1 rounded bg-slate-900 border border-slate-700 text-slate-200 text-xs"
+                      >
+                        {availableYears.map((y) => (
+                          <option key={y} value={y}>
+                            {y}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Save Button */}
@@ -697,7 +1022,7 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
               <button
                 type="button"
                 onClick={handleSaveToGradebook}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/30 transition-all hover:scale-101"
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/30 transition-all hover:scale-101 cursor-pointer"
               >
                 <Save className="w-4 h-4" />
                 <span>Lưu vào Sổ Điểm Học Sinh</span>
@@ -705,10 +1030,31 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
             </div>
 
             {saveSuccess && (
-              <div className="mt-3 p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Đã ghi nhận kết quả vào danh sách học sinh!</span>
+              <div className="mt-3 p-3 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs space-y-2">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>Đã ghi nhận kết quả vào học sinh {studentName}!</span>
+                </div>
+                <div className="flex items-center gap-2 pt-1 border-t border-emerald-500/20">
+                  {lastSavedSubmission && (
+                    <button
+                      type="button"
+                      onClick={() => onViewStudentReport(lastSavedSubmission)}
+                      className="flex-1 py-1 px-2 rounded-lg bg-emerald-600/80 hover:bg-emerald-600 text-white text-[11px] font-bold text-center"
+                    >
+                      Xem báo cáo chi tiết
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSaveSuccess(false);
+                      setPreviewImage(null);
+                    }}
+                    className="py-1 px-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold"
+                  >
+                    Chấm bài tiếp theo
+                  </button>
                 </div>
               </div>
             )}
@@ -813,6 +1159,264 @@ export const ScannerView: React.FC<ScannerViewProps> = ({
           </div>
         </div>
       </div>
+      {/* Modal: View Official Sample Sheet Preview (No Chrome iframe blocking) */}
+      {showSampleModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white rounded-2xl max-w-4xl w-full p-5 sm:p-6 max-h-[92vh] overflow-y-auto space-y-4 shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-blue-600" />
+                  Phiếu Trả Lời Trắc Nghiệm Mẫu Chuẩn - Bộ GD&ĐT
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Mẫu phiếu chính thức chuẩn OMR: Mục 7 (SBD 6 số), Mục 8 (Mã đề 3 số), Phần I (40 câu), Phần II (Đúng/Sai), Phần III (Trả lời ngắn 4 cột)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSampleModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 font-bold transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="border border-slate-300 rounded-xl overflow-y-auto bg-slate-100 flex items-center justify-center p-3 max-h-[66vh] shadow-inner">
+              <img
+                src="/assets/aistudio/phieu_bgd_2025_preview.png"
+                alt="Phiếu Trả Lời Trắc Nghiệm Mẫu - Bộ GD&ĐT"
+                className="max-h-[62vh] w-auto rounded-lg shadow-lg border border-slate-300 object-contain bg-white mx-auto hover:scale-101 transition-transform"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-100">
+              <span className="text-[11px] text-slate-500 font-medium">
+                * Phiếu có 4 vạch đen định vị góc giúp nhận diện quét tự động chính xác cao.
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href="/assets/aistudio/phieu_bgd_2025_preview.png"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center gap-1.5 transition-colors"
+                >
+                  <Eye className="w-4 h-4 text-slate-600" />
+                  <span>Xem ảnh gốc</span>
+                </a>
+
+                <a
+                  href="/assets/aistudio/Phi_u_TNTL_2025_TNMaker_f1ed3d93.pdf"
+                  download="Phieu_Tra_Loi_Trac_Nghiem_2025_BGD.pdf"
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-blue-500/20 transition-all hover:scale-102"
+                >
+                  <FileDown className="w-4 h-4" />
+                  <span>Tải tệp PDF in A4</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setShowSampleModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs transition-colors"
+                >
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Add Students from Keyboard Before Grading */}
+      {showQuickAddModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-5 sm:p-6 max-h-[92vh] overflow-y-auto space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-blue-600" />
+                  Thêm Danh Sách Học Sinh Từ Bàn Phím
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Lưu danh sách học sinh theo SBD, Lớp học và Năm học trước khi bắt đầu quét bài thi.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQuickAddModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600 font-bold transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Mode Switcher */}
+            <div className="flex rounded-xl bg-slate-100 p-1 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setQuickAddMode('single')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${
+                  quickAddMode === 'single'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Nhập từng học sinh
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickAddMode('batch')}
+                className={`flex-1 py-1.5 rounded-lg transition-all ${
+                  quickAddMode === 'batch'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Dán nhanh từ Excel / Bàn phím (Hàng loạt)
+              </button>
+            </div>
+
+            {quickAddMode === 'single' ? (
+              <form onSubmit={handleQuickAddSingleStudent} className="space-y-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Số báo danh (6 chữ số) <span className="text-rose-500">*</span>:
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={quickSbd}
+                      onChange={(e) => setQuickSbd(e.target.value.replace(/\D/g, ''))}
+                      placeholder="VD: 010229"
+                      required
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 font-mono font-bold text-blue-700 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Họ và tên học sinh <span className="text-rose-500">*</span>:
+                    </label>
+                    <input
+                      type="text"
+                      value={quickName}
+                      onChange={(e) => setQuickName(e.target.value)}
+                      placeholder="VD: Trần Thị Mai Phương"
+                      required
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Lớp học:</label>
+                    <input
+                      type="text"
+                      value={targetClass !== 'all' ? targetClass : '12A1'}
+                      onChange={(e) => setTargetClass(e.target.value)}
+                      placeholder="VD: 12A1"
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Năm học:</label>
+                    <input
+                      type="text"
+                      value={targetYear !== 'all' ? targetYear : '2024 - 2025'}
+                      onChange={(e) => setTargetYear(e.target.value)}
+                      placeholder="VD: 2024 - 2025"
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Giới tính:</label>
+                    <select
+                      value={quickGender}
+                      onChange={(e) => setQuickGender(e.target.value as 'Nam' | 'Nữ')}
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 bg-white"
+                    >
+                      <option value="Nam">Nam</option>
+                      <option value="Nữ">Nữ</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Ngày sinh:</label>
+                    <input
+                      type="text"
+                      value={quickDob}
+                      onChange={(e) => setQuickDob(e.target.value)}
+                      placeholder="15/05/2007"
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickAddModal(false)}
+                    className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-md shadow-blue-500/20"
+                  >
+                    Lưu học sinh này vào danh sách
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-3 text-xs">
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-blue-900 space-y-1">
+                  <p className="font-bold">Định dạng mỗi dòng (copy từ Excel hoặc gõ phân cách bằng phím Tab / dấu |):</p>
+                  <p className="font-mono text-[11px] text-blue-700">
+                    SBD [Tab] Họ và tên [Tab] Lớp [Tab] Năm học [Tab] Giới tính [Tab] Ngày sinh
+                  </p>
+                </div>
+
+                <textarea
+                  rows={6}
+                  value={quickBatchText}
+                  onChange={(e) => setQuickBatchText(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl p-3 font-mono text-xs focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                  placeholder="Dán dữ liệu từ bảng tính Excel vào đây..."
+                />
+
+                <div className="pt-2 border-t flex justify-between items-center">
+                  <span className="text-slate-500 text-[11px]">
+                    Sẽ lưu trực tiếp vào cơ sở dữ liệu học sinh của hệ thống.
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickAddModal(false)}
+                      className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50"
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleQuickAddBatchStudents}
+                      className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md shadow-emerald-600/20"
+                    >
+                      Lưu toàn bộ vào danh sách lớp
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

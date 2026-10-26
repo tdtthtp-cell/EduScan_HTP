@@ -76,6 +76,7 @@ export interface Student {
   sbd: string; // 6 digits, e.g. "010201"
   name: string;
   className: string;
+  academicYear: string; // e.g. "2024 - 2025"
   gender: 'Nam' | 'Nữ';
   dob: string;
   email?: string;
@@ -122,6 +123,7 @@ export interface ExamSubmission {
   examCode: string;
   studentName: string;
   className: string;
+  academicYear: string;
   scannedAt: string;
   imagePreviewUrl?: string;
   rawAnswers: {
